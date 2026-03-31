@@ -1,12 +1,208 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>家庭库存管理</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>家庭库存管理</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
+    .app { max-width: 600px; margin: 0 auto; padding: 20px; padding-bottom: 100px; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 16px; margin-bottom: 20px; text-align: center; }
+    .header h1 { font-size: 24px; margin-bottom: 8px; }
+    .header p { opacity: 0.9; font-size: 14px; }
+    .search-box input { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 12px; font-size: 16px; margin-bottom: 20px; }
+    .category-tabs { display: flex; gap: 8px; margin-bottom: 20px; overflow-x: auto; }
+    .category-tab { padding: 8px 16px; border: none; border-radius: 20px; background: white; color: #666; font-size: 14px; cursor: pointer; }
+    .category-tab.active { background: #667eea; color: white; }
+    .item-list { display: flex; flex-direction: column; gap: 12px; }
+    .item-card { background: white; border-radius: 12px; padding: 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .item-info h3 { font-size: 16px; margin-bottom: 4px; }
+    .item-info p { color: #888; font-size: 12px; }
+    .item-quantity { display: flex; align-items: center; gap: 12px; }
+    .qty-btn { width: 36px; height: 36px; border: none; border-radius: 50%; background: #f0f0f0; font-size: 20px; cursor: pointer; }
+    .qty-btn:hover { background: #667eea; color: white; }
+    .qty-num { font-size: 18px; font-weight: bold; min-width: 30px; text-align: center; }
+    .add-btn { position: fixed; bottom: 30px; right: 30px; width: 60px; height: 60px; border: none; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-size: 30px; cursor: pointer; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); }
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { background: white; border-radius: 16px; padding: 24px; width: 90%; max-width: 400px; }
+    .modal h2 { margin-bottom: 20px; }
+    .modal input, .modal select { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; margin-bottom: 12px; font-size: 16px; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-actions button { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
+    .btn-cancel { background: #f0f0f0; color: #666; }
+    .btn-save { background: #667eea; color: white; }
+    .item-actions { display: flex; gap: 8px; }
+    .edit-btn, .delete-btn { padding: 6px 10px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .edit-btn { background: #e3f2fd; color: #1976d2; }
+    .delete-btn { background: #ffebee; color: #d32f2f; }
+    .low-stock { color: #f44336; font-weight: bold; }
+    .empty-state { text-align: center; padding: 60px 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <h1>🏠 家庭库存</h1>
+      <p id="totalCount">共 0 种物品</p>
+    </div>
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="搜索物品...">
+    </div>
+    <div class="category-tabs" id="categoryTabs"></div>
+    <div class="item-list" id="itemList"></div>
+    <button class="add-btn" onclick="openModal()">+</button>
+  </div>
+
+  <div class="modal-overlay" id="modal" style="display:none" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h2 id="modalTitle">添加物品</h2>
+      <input type="text" id="itemName" placeholder="物品名称">
+      <select id="itemCategory">
+        <option value="零食">零食</option>
+        <option value="饮料">饮料</option>
+        <option value="日用品">日用品</option>
+        <option value="调味料">调味料</option>
+        <option value="其他">其他</option>
+      </select>
+      <input type="number" id="itemQuantity" placeholder="数量" value="1">
+      <input type="text" id="itemUnit" placeholder="单位（个/包/瓶等）" value="个">
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeModal()">取消</button>
+        <button class="btn-save" onclick="saveItem()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CATEGORIES = ['全部', '零食', '饮料', '日用品', '调味料', '其他'];
+    const DEFAULT_ITEMS = [
+      { id: 1, name: '薯片', category: '零食', quantity: 2, unit: '包' },
+      { id: 2, name: '可乐', category: '饮料', quantity: 5, unit: '瓶' },
+      { id: 3, name: '洗衣液', category: '日用品', quantity: 1, unit: '瓶' },
+    ];
+
+    let items = JSON.parse(localStorage.getItem('homeInventory')) || DEFAULT_ITEMS;
+    let currentCategory = '全部';
+    let editingId = null;
+
+    function save() {
+      localStorage.setItem('homeInventory', JSON.stringify(items));
+    }
+
+    function render() {
+      document.getElementById('totalCount').textContent = `共 ${items.length} 种物品`;
+      
+      const tabsHtml = CATEGORIES.map(c => 
+        `<button class="category-tab ${c === currentCategory ? 'active' : ''}" onclick="setCategory('${c}')">${c}</button>`
+      ).join('');
+      document.getElementById('categoryTabs').innerHTML = tabsHtml;
+
+      const search = document.getElementById('searchInput').value.toLowerCase();
+      const filtered = items.filter(item => {
+        const matchSearch = item.name.toLowerCase().includes(search);
+        const matchCategory = currentCategory === '全部' || item.category === currentCategory;
+        return matchSearch && matchCategory;
+      });
+
+      if (filtered.length === 0) {
+        document.getElementById('itemList').innerHTML = '<div class="empty-state"><p>暂无物品</p></div>';
+      } else {
+        document.getElementById('itemList').innerHTML = filtered.map(item => `
+          <div class="item-card">
+            <div class="item-info">
+              <h3>${item.name}</h3>
+              <p>${item.category}${item.quantity <= 1 ? ' · <span class="low-stock">存量不足!</span>' : ''}</p>
+            </div>
+            <div class="item-quantity">
+              <button class="qty-btn" onclick="updateQty(${item.id}, -1)">-</button>
+              <span class="qty-num">${item.quantity}</span>
+              <button class="qty-btn" onclick="updateQty(${item.id}, 1)">+</button>
+            </div>
+            <div class="item-actions">
+              <button class="edit-btn" onclick="editItem(${item.id})">编辑</button>
+              <button class="delete-btn" onclick="deleteItem(${item.id})">删除</button>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    function setCategory(c) {
+      currentCategory = c;
+      render();
+    }
+
+    function updateQty(id, delta) {
+      const item = items.find(i => i.id === id);
+      if (item) {
+        item.quantity = Math.max(0, item.quantity + delta);
+        save();
+        render();
+      }
+    }
+
+    function openModal() {
+      editingId = null;
+      document.getElementById('modalTitle').textContent = '添加物品';
+      document.getElementById('itemName').value = '';
+      document.getElementById('itemCategory').value = '零食';
+      document.getElementById('itemQuantity').value = 1;
+      document.getElementById('itemUnit').value = '个';
+      document.getElementById('modal').style.display = 'flex';
+    }
+
+    function editItem(id) {
+      const item = items.find(i => i.id === id);
+      if (item) {
+        editingId = id;
+        document.getElementById('modalTitle').textContent = '编辑物品';
+        document.getElementById('itemName').value = item.name;
+        document.getElementById('itemCategory').value = item.category;
+        document.getElementById('itemQuantity').value = item.quantity;
+        document.getElementById('itemUnit').value = item.unit;
+        document.getElementById('modal').style.display = 'flex';
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('modal').style.display = 'none';
+    }
+
+    function saveItem() {
+      const name = document.getElementById('itemName').value.trim();
+      if (!name) return;
+
+      const item = {
+        id: editingId || Date.now(),
+        name: name,
+        category: document.getElementById('itemCategory').value,
+        quantity: parseInt(document.getElementById('itemQuantity').value) || 0,
+        unit: document.getElementById('itemUnit').value || '个'
+      };
+
+      if (editingId) {
+        const idx = items.findIndex(i => i.id === editingId);
+        if (idx >= 0) items[idx] = item;
+      } else {
+        items.push(item);
+      }
+
+      save();
+      closeModal();
+      render();
+    }
+
+    function deleteItem(id) {
+      if (confirm('确定要删除这个物品吗？')) {
+        items = items.filter(i => i.id !== id);
+        save();
+        render();
+      }
+    }
+
+    document.getElementById('searchInput').addEventListener('input', render);
+    render();
+  </script>
+</body>
 </html>
